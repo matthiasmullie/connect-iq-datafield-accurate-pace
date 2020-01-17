@@ -182,6 +182,33 @@ class AccuratePaceView extends WatchUi.SimpleDataField {
 		self.recentMoments.add(info.when);
 		self.recentLocations.add(info.position);
 		self.recentProjections.add(projectedLocation);
+
+		// if distance from GPS becomes too big, then go back and adjust recent projections
+		var distanceFromGps = self.calculateDistance(info.position, projectedLocation);
+		var accuracyInMeters = self.getLocationAccuracyInMeters(info.accuracy);
+		if (distanceFromGps > 0 && distanceFromGps > accuracyInMeters / 2) {
+			var fixedPosition = self.getIntermediateCoordinate(
+				projectedLocation,
+				info.position,
+				accuracyInMeters / 2 / distanceFromGps
+			);
+
+			// after having "fixed" our most recent projection, which was way off,
+			// we'll want to adjust most recent projections as well: we didn't suddenly
+			// warp to the new location, but we got there gradually, and apparently
+			// we've been projecting that incorrectly
+			// we'll simply adjust the existing locations relative the new fixed location
+			self.recentProjections[self.recentProjections.size() - 1] = fixedPosition;
+			for (var i = self.recentProjections.size() - 2; i > 0; i--) {
+				var distanceFromProjection = self.calculateDistance(self.recentProjections[i], projectedLocation);
+				var distanceFromFix = self.calculateDistance(self.recentProjections[i], self.recentProjections[self.recentProjections.size() - 1]);
+				self.recentProjections[i] = self.getIntermediateCoordinate(
+					self.recentProjections[i - 1],
+					self.recentProjections[i],
+					distanceFromProjection / distanceFromFix
+				);
+			}
+		}
 	}
 
 	function getProjectedLocation(info) {
@@ -262,12 +289,11 @@ class AccuratePaceView extends WatchUi.SimpleDataField {
 			return sensorsDistance * (1 - gpsCorrection) + gpsDistance * gpsCorrection;
 		}
 
-		// there's no salvaging this: we're outside the GPS accuracy zone and we just need
-		// to make a drastic jump back towards the correct location
-		// if we drag this out for too long, we might not catch up in time and the effects
-		// of this might drag on for too long - let's close that gap quickly, but not *all*
-		// the way. because GPS data is not *that* precise anyway
-		return gpsDistance - (accuracyInMeters / 2);
+		// there's no salvaging this, all of the data conflicts
+		// let's go with recent pace, and then trust that the additional checks
+		// later on will leverage GPS in a good enough way to rewrite the history
+		// of recent locations
+		return recentDistance;
 	}
 
 	function getProjectedAngle(info) {
